@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>高雄市加油站地圖資訊</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <!-- MarkerCluster CSS -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.min.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.min.css" />
+
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+
+    /* 頂部操作列 */
+    header {
+      height: 56px;
+      background-color: #0b3c5d;
+      color: #fff;
+      padding: 0 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+      position: relative;
+      z-index: 1000;
+    }
+
+    h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    select, input[type="text"] {
+      padding: 6px 10px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      outline: none;
+    }
+
+    button {
+      background-color: #d9534f;
+      color: #fff;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.2s;
+    }
+
+    button:hover {
+      background-color: #c9302c;
+    }
+
+    #status {
+      font-size: 0.8rem;
+      color: #ffd166;
+      white-space: nowrap;
+    }
+
+    /* 地圖視窗 */
+    #map {
+      width: 100%;
+      height: calc(100% - 56px);
+      background-color: #f8f9fa;
+    }
+
+    /* Popup 彈窗排版 */
+    .station-popup {
+      font-size: 0.85rem;
+      line-height: 1.5;
+    }
+
+    .station-popup h3 {
+      font-size: 0.95rem;
+      color: #0b3c5d;
+      margin-bottom: 4px;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 3px;
+    }
+
+    .tag-brand {
+      display: inline-block;
+      background-color: #e9ecef;
+      color: #495057;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-weight: bold;
+      margin-bottom: 4px;
+      font-size: 0.75rem;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>⛽ 高雄市加油站地圖</h1>
+    <div class="controls">
+      <!-- 品牌快速篩選 -->
+      <select id="brandSelect" aria-label="篩選品牌">
+        <option value="ALL">所有品牌</option>
+        <option value="中油">台灣中油 (CPC)</option>
+        <option value="台塑">台塑石油 / 台亞</option>
+        <option value="全國">全國加油站</option>
+        <option value="山隆">山隆加油站</option>
+      </select>
+
+      <!-- 關鍵字搜尋（可搜尋站名、區名、路名） -->
+      <input type="text" id="searchInput" placeholder="搜尋區名、路名或站名...">
+      <button id="resetViewBtn" type="button">回高雄視角</button>
+      <span id="status">準備載入地圖...</span>
+    </div>
+  </header>
+
+  <div id="map"></div>
+
+  <!-- Leaflet JS & MarkerCluster JS -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.min.js"></script>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      // 1. 設定高雄市中心座標與縮放層級 (Zoom 11)
+      const KAOHSIUNG_CENTER = [22.6273, 120.3014];
+      const INITIAL_ZOOM = 11;
+
+      const dom = {
+        brandSelect: document.getElementById('brandSelect'),
+        searchInput: document.getElementById('searchInput'),
+        resetViewBtn: document.getElementById('resetViewBtn'),
+        status: document.getElementById('status')
+      };
+
+      if (typeof L === 'undefined') {
+        dom.status.textContent = '❌ Leaflet 函式庫載入失敗，請確認網路連線';
+        return;
+      }
+
+      // 2. 載入 OpenStreetMap 圖資
+      const map = L.map('map').setView(KAOHSIUNG_CENTER, INITIAL_ZOOM);
+
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      }).addTo(map);
+
+      // 3. 建立標記聚合群組
+      const markersCluster = L.markerClusterGroup({
+        chunkedLoading: true,
+        spiderfyOnMaxZoom: true,
+        showCoverageOnHover: false
+      });
+      map.addLayer(markersCluster);
+
+      let stationPool = [];
+
+      // 防抖函數
+      function debounce(fn, delay = 200) {
+        let timer = null;
+        return (...args) => {
+          clearTimeout(timer);
+          timer = setTimeout(() => fn(...args), delay);
+        };
+      }
+
+      // 安全建立 DOM 節點防止 XSS
+      function createPopupElement(data) {
+        const container = document.createElement('div');
+        container.className = 'station-popup';
+
+        const title = document.createElement('h3');
+        title.textContent = data.name;
+        container.appendChild(title);
+
+        const brandBadge = document.createElement('div');
+        brandBadge.className = 'tag-brand';
+        brandBadge.textContent = `體系：${data.brand}`;
+        container.appendChild(brandBadge);
+
+        const pAddr = document.createElement('p');
+        pAddr.innerHTML = '<strong>📍 地址：</strong>';
+        pAddr.appendChild(document.createTextNode(data.address));
+        container.appendChild(pAddr);
+
+        const pHours = document.createElement('p');
+        pHours.innerHTML = '<strong>⏰ 時間：</strong>';
+        pHours.appendChild(document.createTextNode(data.openingHours));
+        container.appendChild(pHours);
+
+        return container;
+      }
+
+      // 4. 利用 Overpass API 指定高雄市行政邊界抓取加油站
+      async function fetchKaohsiungStations() {
+        dom.status.textContent = '載入高雄市資料中...';
+
+        const query = `
+          [out:json][timeout:25];
+          area["name"="高雄市"]->.searchArea;
+          (
+            node["amenity"="fuel"](area.searchArea);
+          );
+          out body;
+        `;
+        const apiUrl = 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(query);
+
+        try {
+          const res = await fetch(apiUrl);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const json = await res.json();
+
+          stationPool = json.elements.map(el => {
+            if (!el.lat || !el.lon) return null;
+
+            const tags = el.tags || {};
+            const name = tags.name || tags['name:zh'] || '未命名加油站';
+            const brand = tags.brand || tags.operator || '一般/其他';
+            const address = tags['addr:street']
+              ? `${tags['addr:city'] || '高雄市'}${tags['addr:district'] || ''}${tags['addr:street']}${tags['addr:housenumber'] || ''}`
+              : (tags['addr:full'] || '高雄市轄區內');
+            const openingHours = tags.opening_hours || '未註明';
+
+            const marker = L.marker([el.lat, el.lon]);
+            marker.bindPopup(createPopupElement({ name, brand, address, openingHours }));
+
+            return {
+              name: name.toLowerCase(),
+              brand: brand.toLowerCase(),
+              address: address.toLowerCase(),
+              marker
+            };
+          }).filter(Boolean);
+
+          dom.status.textContent = `高雄市共載入 ${stationPool.length} 座加油站`;
+          applyFilter();
+
+        } catch (err) {
+          console.error(err);
+          dom.status.textContent = '⚠️ API 連線受限，請稍後重試';
+        }
+      }
+
+      // 5. 即時過濾站點（可過濾品牌、行政區如「苓雅區」、「左營區」等）
+      function applyFilter() {
+        const brandKey = dom.brandSelect.value;
+        const searchKey = dom.searchInput.value.trim().toLowerCase();
+
+        markersCluster.clearLayers();
+        const activeMarkers = [];
+
+        for (let i = 0; i < stationPool.length; i++) {
+          const item = stationPool[i];
+          const matchBrand = (brandKey === 'ALL') ||
+            item.name.includes(brandKey.toLowerCase()) ||
+            item.brand.includes(brandKey.toLowerCase());
+
+          if (!matchBrand) continue;
+
+          const matchSearch = !searchKey ||
+            item.name.includes(searchKey) ||
+            item.address.includes(searchKey);
+
+          if (matchSearch) {
+            activeMarkers.push(item.marker);
+          }
+        }
+
+        markersCluster.addLayers(activeMarkers);
+        dom.status.textContent = `顯示：${activeMarkers.length} / ${stationPool.length} 座`;
+      }
+
+      // 事件監聽
+      dom.brandSelect.addEventListener('change', applyFilter);
+      dom.searchInput.addEventListener('input', debounce(applyFilter, 200));
+      dom.resetViewBtn.addEventListener('click', () => {
+        map.setView(KAOHSIUNG_CENTER, INITIAL_ZOOM);
+      });
+
+      // 初始化載入
+      fetchKaohsiungStations();
+    });
+  </script>
+</body>
+</html>
